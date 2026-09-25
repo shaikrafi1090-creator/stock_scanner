@@ -47,6 +47,28 @@ all_nse_symbols = get_nse_tickers()
 # Sidebar Filters
 st.sidebar.header("Screener Filters")
 
+# Standard Yahoo Finance Sectors
+yfinance_sectors = [
+    "All",
+    "Basic Materials",
+    "Communication Services",
+    "Consumer Cyclical",
+    "Consumer Defensive",
+    "Energy",
+    "Financial Services",
+    "Healthcare",
+    "Industrials",
+    "Real Estate",
+    "Technology",
+    "Utilities"
+]
+
+selected_sectors = st.sidebar.multiselect(
+    "Filter by Sector",
+    yfinance_sectors,
+    default=["All"]
+)
+
 # Let users choose how many stocks to scan to manage execution speed
 max_stocks_to_scan = st.sidebar.slider(
     "Max Stocks to Scan (Performance Control)",
@@ -78,6 +100,7 @@ def fetch_stock_data(tickers):
       data_list.append({
           "Ticker": ticker,
           "Company Name": info.get("shortName", ticker),
+          "Sector": info.get("sector", "Unknown"),
           "Price (₹)": info.get("currentPrice", info.get("regularMarketPrice", 0)),
           "Market Cap (₹)": info.get("marketCap", 0),
           "P/E Ratio": info.get("trailingPE", 0),
@@ -103,8 +126,12 @@ if target_tickers:
       df = fetch_stock_data(target_tickers)
 
     if not df.empty:
-      # Filter criteria applied
+      # 1. Apply Price filter
       filtered_df = df[df["Price (₹)"] <= max_price]
+      
+      # 2. Apply Sector filter
+      if "All" not in selected_sectors and len(selected_sectors) > 0:
+          filtered_df = filtered_df[filtered_df["Sector"].isin(selected_sectors)]
 
       st.success(
           f"Scan complete! Showing {len(filtered_df)} matching stocks."
