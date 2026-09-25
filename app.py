@@ -47,15 +47,16 @@ def fetch_true_rs_matrix(tickers):
 
     # Ensure benchmark data exists
     if benchmark not in closes.columns:
+        st.error("Benchmark (^NSEI) data failed to download. Please try again.")
         return pd.DataFrame()
 
+    # CRITICAL FIX: Clean missing data to prevent 'None' or 'NaN' errors
+    closes = closes.ffill().bfill()
+
     # 1. Create the True Relative Strength (RS) Ratio DataFrame
-    # RS Ratio = Stock Price / Benchmark Price
-    # We multiply by 100 just to normalize the decimals for easier reading internally
     rs_ratios = closes.div(closes[benchmark], axis=0) * 100
 
-    # 2. Helper function to calculate percentage change of the RS Ratio
-    # A positive % means the stock's ratio against Nifty is growing (Outperforming)
+    # 2. Helper function to calculate percentage change safely
     def get_rs_momentum(df, days_back):
         if len(df) <= days_back:
             return pd.Series(0, index=df.columns)
@@ -69,14 +70,20 @@ def fetch_true_rs_matrix(tickers):
 
     rs_data = []
 
+    # Safe rounding helper to catch lingering NaNs
+    def safe_round(val):
+        if pd.isna(val):
+            return 0.0
+        return round(val, 2)
+
     for ticker, f_ticker in zip(tickers, formatted_tickers):
         if f_ticker in rs_ratios.columns:
             rs_data.append({
                 "Ticker": ticker,
-                "1W RS Momentum (%)": round(rs_1w[f_ticker], 2),
-                "1M RS Momentum (%)": round(rs_1m[f_ticker], 2),
-                "3M RS Momentum (%)": round(rs_3m[f_ticker], 2),
-                "6M RS Momentum (%)": round(rs_6m[f_ticker], 2),
+                "1W RS Momentum (%)": safe_round(rs_1w.get(f_ticker, 0)),
+                "1M RS Momentum (%)": safe_round(rs_1m.get(f_ticker, 0)),
+                "3M RS Momentum (%)": safe_round(rs_3m.get(f_ticker, 0)),
+                "6M RS Momentum (%)": safe_round(rs_6m.get(f_ticker, 0)),
             })
 
     return pd.DataFrame(rs_data)
