@@ -1,179 +1,149 @@
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-import numpy as np
 
 st.set_page_config(
-    page_title="Pro NSE Screener", page_icon="🚀", layout="wide"
+    page_title="NSE Screener & RS Matrix", page_icon="📈", layout="wide"
 )
 
-st.title("🚀 Advanced NSE Stock Screener")
-st.write(
-    "Combine Technical Analysis, Fundamentals, and Relative Strength in one scan."
-)
+st.title("🇮🇳 Advanced NSE Screener & RS Matrix")
+st.write("Screen fundamental data and analyze momentum using a multi-timeframe Relative Strength heatmap.")
 
 @st.cache_data(ttl=86400)
 def get_nse_tickers():
-  url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-  headers = {"User-Agent": "Mozilla/5.0"}
-  try:
-    df = pd.read_csv(url, storage_options=headers)
-    return df["SYMBOL"].str.strip().tolist()
-  except Exception:
-    return ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "ITC", "SBIN", "BHARTIARTL", "LICI"]
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        df = pd.read_csv(url, storage_options=headers)
+        return df["SYMBOL"].str.strip().tolist()
+    except Exception:
+        return ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "ITC", "SBIN", "BHARTIARTL", "LICI"]
 
 all_nse_symbols = get_nse_tickers()
 
 # ==========================================
-# 1. SIDEBAR: CORE & FUNDAMENTAL FILTERS
+# SIDEBAR FILTERS (Global)
 # ==========================================
-st.sidebar.header("1. Fundamental Filters")
-max_stocks_to_scan = st.sidebar.slider("Stocks to Scan (Limits API load)", 5, 500, 30, 5)
-selected_symbols = st.sidebar.multiselect("Select Specific Stocks", all_nse_symbols, default=all_nse_symbols[:15])
+st.sidebar.header("Global Watchlist")
+max_stocks = st.sidebar.slider("Max Stocks to Scan", 5, len(all_nse_symbols), 15, 5)
+selected_symbols = st.sidebar.multiselect("Select Specific Stocks", all_nse_symbols, default=all_nse_symbols[:10])
 
-max_price = st.sidebar.number_input("Max Price (₹)", value=5000)
-min_mcap_cr = st.sidebar.number_input("Min Market Cap (₹ Crores)", value=1000)
-max_pe = st.sidebar.number_input("Max P/E Ratio", value=100)
-
-yfinance_sectors = ["All", "Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Technology", "Utilities"]
+st.sidebar.header("Fundamental Filters (Tab 1)")
+max_price = st.sidebar.slider("Maximum Price (₹)", 10, 10000, 5000, 50)
+yfinance_sectors = ["All", "Basic Materials", "Communication Services", "Consumer Cyclical", "Energy", "Financial Services", "Healthcare", "Industrials", "Technology", "Utilities"]
 selected_sectors = st.sidebar.multiselect("Filter by Sector", yfinance_sectors, default=["All"])
-
-# ==========================================
-# 2. SIDEBAR: TECHNICAL FILTERS
-# ==========================================
-st.sidebar.header("2. Technical Filters")
-above_50ma = st.sidebar.checkbox("📈 Price > 50-Day MA (Uptrend)")
-above_200ma = st.sidebar.checkbox("🚀 Price > 200-Day MA (Long Trend)")
-near_52w_high = st.sidebar.checkbox("🔥 Within 10% of 52-Week High")
-
-# ==========================================
-# 3. SIDEBAR: PERFORMANCE FILTERS
-# ==========================================
-st.sidebar.header("3. Relative Performance")
-timeframe_options = {"1 Month": "1mo", "3 Months": "3mo", "6 Months": "6mo"}
-selected_timeframe = st.sidebar.selectbox("Comparison Timeframe", list(timeframe_options.keys()), index=1)
-timeframe_val = timeframe_options[selected_timeframe]
-
-stock_outperform_sector = st.sidebar.checkbox(f"Stock > Sector Return")
-
 
 # ==========================================
 # DATA FETCHING ENGINE
 # ==========================================
 @st.cache_data(ttl=3600)
-def fetch_advanced_data(tickers, timeframe):
-  data_list = []
-  formatted_tickers = [f"{t}.NS" for t in tickers]
-  
-  # Fetch historical prices for returns calculation
-  try:
-    hist = yf.download(formatted_tickers, period=timeframe, progress=False)
-    hist_close = hist["Close"] if "Close" in hist else hist
-        
-    returns = {}
-    for col in hist_close.columns:
-        valid_prices = hist_close[col].dropna()
-        if len(valid_prices) >= 2:
-            returns[col] = (valid_prices.iloc[-1] - valid_prices.iloc[0]) / valid_prices.iloc[0] * 100
-        else:
-            returns[col] = 0
-  except Exception:
-    returns = {}
+def fetch_matrix_data(tickers):
+    fundamental_data = []
+    formatted_tickers = [f"{t}.NS" for t in tickers]
+    all_tickers = formatted_tickers + ["^NSEI"]  # Include NIFTY 50
 
-  # Fetch fundamental & technical data
-  for ticker, f_ticker in zip(tickers, formatted_tickers):
-    try:
-      stock = yf.Ticker(f_ticker)
-      info = stock.info
-      
-      # Handle potential None values from Yahoo Finance
-      price = info.get("currentPrice", info.get("regularMarketPrice", 0)) or 0
-      mcap = info.get("marketCap", 0) or 0
-      pe = info.get("trailingPE", 0) or 0
-      div_yield = info.get("dividendYield", 0) or 0
-      ma50 = info.get("fiftyDayAverage", 0) or 0
-      ma200 = info.get("twoHundredDayAverage", 0) or 0
-      high52 = info.get("fiftyTwoWeekHigh", 0) or 0
+    # 1. Fetch 1-Year Historical Price Data for RS Matrix
+    hist = yf.download(all_tickers, period="1y", interval="1d", progress=False)
+    
+    if "Close" in hist:
+        closes = hist["Close"]
+    else:
+        closes = hist
 
-      data_list.append({
-          "Ticker": ticker,
-          "Sector": info.get("sector", "Unknown"),
-          "Price (₹)": round(price, 2),
-          "Return (%)": round(returns.get(f_ticker, 0), 2),
-          "Market Cap (₹ Cr)": round(mcap / 10000000, 2), # Convert to Crores
-          "P/E Ratio": round(pe, 2),
-          "Div Yield (%)": round(div_yield * 100, 2),
-          "50-Day MA": round(ma50, 2),
-          "200-Day MA": round(ma200, 2),
-          "52W High (₹)": round(high52, 2)
-      })
-    except Exception:
-      continue
-      
-  return pd.DataFrame(data_list)
+    # Helper function to calculate percentage returns
+    def get_return(df, days_back):
+        if len(df) <= days_back:
+            return pd.Series(0, index=df.columns)
+        return (df.iloc[-1] - df.iloc[-days_back]) / df.iloc[-days_back] * 100
+
+    # Approximate trading days: 1W=5, 1M=21, 3M=63, 6M=126
+    ret_1w = get_return(closes, 5)
+    ret_1m = get_return(closes, 21)
+    ret_3m = get_return(closes, 63)
+    ret_6m = get_return(closes, 126)
+
+    nifty_rets = {
+        "1W": ret_1w.get("^NSEI", 0),
+        "1M": ret_1m.get("^NSEI", 0),
+        "3M": ret_3m.get("^NSEI", 0),
+        "6M": ret_6m.get("^NSEI", 0),
+    }
+
+    rs_data = []
+
+    # 2. Fetch Fundamental Data
+    for ticker, f_ticker in zip(tickers, formatted_tickers):
+        try:
+            stock = yf.Ticker(f_ticker)
+            info = stock.info
+            
+            # Fundamentals
+            fundamental_data.append({
+                "Ticker": ticker,
+                "Company Name": info.get("shortName", ticker),
+                "Sector": info.get("sector", "Unknown"),
+                "Price (₹)": info.get("currentPrice", 0),
+                "Market Cap (₹)": info.get("marketCap", 0),
+                "P/E Ratio": info.get("trailingPE", 0)
+            })
+
+            # Relative Strength Data (Stock Return - Nifty Return)
+            rs_data.append({
+                "Ticker": ticker,
+                "1W RS": round(ret_1w.get(f_ticker, 0) - nifty_rets["1W"], 2),
+                "1M RS": round(ret_1m.get(f_ticker, 0) - nifty_rets["1M"], 2),
+                "3M RS": round(ret_3m.get(f_ticker, 0) - nifty_rets["3M"], 2),
+                "6M RS": round(ret_6m.get(f_ticker, 0) - nifty_rets["6M"], 2),
+            })
+            
+        except Exception:
+            continue
+
+    return pd.DataFrame(fundamental_data), pd.DataFrame(rs_data), nifty_rets
 
 # ==========================================
-# EXECUTION & FILTERING LOGIC
+# TABS & UI RENDERING
 # ==========================================
-target_tickers = selected_symbols if selected_symbols else all_nse_symbols[:max_stocks_to_scan]
+target_tickers = selected_symbols if selected_symbols else all_nse_symbols[:max_stocks]
 
 if target_tickers:
-  if st.button("Run Advanced Screener", type="primary"):
-    
-    # Progress bar UI
-    progress_text = "Scanning market data..."
-    my_bar = st.progress(0, text=progress_text)
-    
-    df = fetch_advanced_data(target_tickers, timeframe_val)
-    my_bar.progress(100, text="Scan Complete!")
+    if st.button("Run Analytics Engine"):
+        with st.spinner("Processing historical data and fundamentals..."):
+            fund_df, rs_df, nifty_rets = fetch_matrix_data(target_tickers)
 
-    if not df.empty:
-      # Calculate Dynamic Sector Average Returns
-      df["Sector Return (%)"] = round(df.groupby("Sector")["Return (%)"].transform("mean"), 2)
-      
-      # 1. Apply Core Filters
-      f_df = df[
-          (df["Price (₹)"] <= max_price) & 
-          (df["Market Cap (₹ Cr)"] >= min_mcap_cr)
-      ]
-      
-      # Filter P/E Ratio (ignoring 0 which means unprofitable/no data)
-      f_df = f_df[(f_df["P/E Ratio"] <= max_pe) | (f_df["P/E Ratio"] == 0)]
-      
-      if "All" not in selected_sectors and len(selected_sectors) > 0:
-          f_df = f_df[f_df["Sector"].isin(selected_sectors)]
-          
-      # 2. Apply Technical Filters
-      if above_50ma:
-          f_df = f_df[f_df["Price (₹)"] > f_df["50-Day MA"]]
-      if above_200ma:
-          f_df = f_df[f_df["Price (₹)"] > f_df["200-Day MA"]]
-      if near_52w_high:
-          # Price is greater than 90% of the 52-week high
-          f_df = f_df[f_df["Price (₹)"] >= (f_df["52W High (₹)"] * 0.90)]
+        if not fund_df.empty:
+            tab1, tab2 = st.tabs(["📊 Fundamental Screener", "🔥 Relative Strength (RS) Matrix"])
 
-      # 3. Apply Performance Filter
-      if stock_outperform_sector:
-          f_df = f_df[f_df["Return (%)"] > f_df["Sector Return (%)"]]
+            # TAB 1: FUNDAMENTAL SCREENER
+            with tab1:
+                st.subheader("Fundamental Data")
+                filtered_df = fund_df[fund_df["Price (₹)"] <= max_price]
+                if "All" not in selected_sectors and len(selected_sectors) > 0:
+                    filtered_df = filtered_df[filtered_df["Sector"].isin(selected_sectors)]
+                st.dataframe(filtered_df, use_container_width=True)
 
-      # Formatting the final display table
-      display_cols = ["Ticker", "Sector", "Price (₹)", "Return (%)", "Sector Return (%)", "Market Cap (₹ Cr)", "P/E Ratio", "Div Yield (%)", "52W High (₹)"]
-      f_df = f_df[[c for c in display_cols if c in f_df.columns]]
+            # TAB 2: RS MATRIX HEATMAP
+            with tab2:
+                st.subheader("Multi-Timeframe Relative Strength")
+                st.markdown(
+                    f"**NIFTY 50 Benchmarks:** "
+                    f"1W: `{nifty_rets['1W']:.2f}%` | "
+                    f"1M: `{nifty_rets['1M']:.2f}%` | "
+                    f"3M: `{nifty_rets['3M']:.2f}%` | "
+                    f"6M: `{nifty_rets['6M']:.2f}%`"
+                )
+                st.write("Values show how much the stock beat (+) or lagged (-) the NIFTY 50. Styled as a heatmap for quick momentum scanning.")
+                
+                # Apply background gradient (Heatmap) to the RS columns
+                rs_cols = ["1W RS", "1M RS", "3M RS", "6M RS"]
+                
+                # RdYlGn is a standard matplotlib colormap (Red -> Yellow -> Green)
+                # vmin/vmax locks the color scale to -20% to +20% for consistent visual contrast
+                styled_rs = rs_df.style.background_gradient(
+                    cmap="RdYlGn", subset=rs_cols, vmin=-20, vmax=20
+                ).format(precision=2)
 
-      st.success(f"Found {len(f_df)} stocks matching your advanced criteria.")
-      
-      # Display as an interactive dataframe
-      st.dataframe(
-          f_df, 
-          use_container_width=True,
-          hide_index=True
-      )
-      
-      # Export
-      csv = f_df.to_csv(index=False).encode("utf-8")
-      st.download_button("Download Final List as CSV", data=csv, file_name="pro_nse_screener.csv", mime="text/csv")
-      
-    else:
-      st.warning("No data retrieved. Try adjusting your limits.")
-else:
-  st.info("Select symbols from the sidebar to begin.")
+                st.dataframe(styled_rs, use_container_width=True)
+                
+        else:
+            st.warning("No data retrieved.")
